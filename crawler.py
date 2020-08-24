@@ -3,18 +3,34 @@
 import os
 import json
 import requests
+import logging
 
 from bs4 import BeautifulSoup
 from datetime import datetime
 from dotenv import load_dotenv
 
 
+def setup_logging(name: str, filename: str,
+                  format: str = '%(asctime)s - %(name)s - %(levelname)s - %(message)s'):
+    logger = logging.getLogger(name)
+    logger.setLevel(logging.DEBUG)
+    fh = logging.FileHandler(filename)
+    fh.setLevel(logging.DEBUG)
+    ch = logging.StreamHandler()
+    ch.setLevel(logging.ERROR)
+    formatter = logging.Formatter(format)
+    fh.setFormatter(formatter)
+    ch.setFormatter(formatter)
+    logger.addHandler(fh)
+    logger.addHandler(ch)
+    return logger
+
+
 class RastaCrawler (object):
 
-    def __init__(self, url):
+    def __init__(self, url: str, logger: logging.Logger):
         self._url = url
-        self.now = datetime.now()
-        self.str_now = self.now.strftime("%Y-%m-%d %H:%M:%S")
+        self.logger = logger
 
     def has_stock(self):
         session = requests.session()
@@ -30,14 +46,12 @@ class RastaCrawler (object):
             item_courses = [{
                 "name": course["attributes"]["Package"],
                 "price": f"{course['priceMoney']['currency']} {course['priceMoney']['value']}",
-                "stock": course["qtyInStock"]
+                "stock": int(course["qtyInStock"])
             } for course in courses]
             in_stock = list(filter(lambda it: it['stock'] > 0, item_courses))
+            self.logger.info(f"{len(in_stock)} elementos en el stock")
+            session.close()
             return in_stock.pop() if len(in_stock) > 0 else None
-
-    @property
-    def current_date(self):
-        return self.str_now
 
 
 class TelegramBot (object):
@@ -63,21 +77,22 @@ class TelegramBot (object):
 def main():
     load_dotenv()
     url = os.getenv("ZEROPOINT_URL")
-    cra = RastaCrawler(url)
+    logger = setup_logging(os.getenv("LOGNAME"), os.getenv("LOGFILE"))
+    cra = RastaCrawler(url, logger)
     bot = TelegramBot(os.getenv("BOT_TOKEN"), os.getenv("ROGUE_CAMP_CHAT"))
-    item = cra.has_stock()
-    if item:
+    stock_item = cra.has_stock()
+    if stock_item:
+        logger.info("Hay lugares disponibles :D ... comprar...")
         msg = f"""
         Hay lugares para el Curso de Red Team del Rasta Mouse
-        - {item.get("name")}
-        - {item.get("price")}
-        - {item.get("stock")}
+        - {stock_item.get("name")}
+        - {stock_item.get("price")}
+        - {stock_item.get("stock")}
         {url}
         """
         bot.send_message(msg)
     else:
-        bot.send_message(
-            "No hay ningun lugar en el curso de Rasta Mouse de Red Teamming :/")
+        logger.info(f"No hay lugares disponibles ... siga intentando")
 
 
 if __name__ == '__main__':
